@@ -8,7 +8,7 @@ A simple in-memory Java library for tracking live football matches.
 mvn test
 ```
 
-Requires Java 17+ and Maven 3.8+.
+Requires Java 21+ and Maven 3.8+.
 
 ## Assumptions
 
