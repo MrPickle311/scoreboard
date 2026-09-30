@@ -127,6 +127,7 @@ public abstract class MatchRepositoryContractTest {
 
         assertTrue(repository.findLive().isEmpty());
         assertFalse(repository.findById(match.id()).orElseThrow().status().isLive(), "finished match is kept");
+        assertEquals(List.of(match.id()), repository.findFinished().stream().map(Match::id).toList());
         repository.insert(newMatch("Mexico", "Canada"));
     }
 

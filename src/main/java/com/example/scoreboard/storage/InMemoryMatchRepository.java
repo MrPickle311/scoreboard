@@ -135,4 +135,11 @@ public final class InMemoryMatchRepository implements MatchRepository {
                 .filter(match -> match.status().isLive())
                 .toList();
     }
+
+    @Override
+    public List<Match> findFinished() {
+        return matches.values().stream()
+                .filter(match -> !match.status().isLive())
+                .toList();
+    }
 }

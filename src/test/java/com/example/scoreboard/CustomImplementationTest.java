@@ -33,6 +33,7 @@ class CustomImplementationTest {
         @Override public Optional<Match> findById(MatchId id) { return delegate.findById(id); }
         @Override public boolean replace(Match expected, Match updated) { return delegate.replace(expected, updated); }
         @Override public List<Match> findLive() { return delegate.findLive(); }
+        @Override public List<Match> findFinished() { return delegate.findFinished(); }
     }
 
     record NumericId(long value) implements MatchId {
@@ -87,6 +88,7 @@ class CustomImplementationTest {
 
         assertEquals("ABANDONED", ended.status().name());
         assertEquals(List.of(), scoreboard.getSummary());
+        assertEquals(List.of(ended), scoreboard.getFinishedMatches());
         MatchNotLiveException e = assertThrows(MatchNotLiveException.class, () -> scoreboard.scoreGoal(id, Side.HOME));
         assertEquals("ABANDONED", e.status().name());
     }

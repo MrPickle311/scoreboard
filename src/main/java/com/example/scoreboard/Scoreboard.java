@@ -159,6 +159,19 @@ public final class Scoreboard {
                 .toList();
     }
 
+    /**
+     * Extra feature: matches that are no longer live (finished, or any custom non-live status), most recently
+     * started first. Finished matches are kept as history, so this lets callers show final results.
+     * The returned list is an unmodifiable point-in-time snapshot.
+     */
+    public List<Match> getFinishedMatches() {
+        List<Match> finished = call("MatchRepository.findFinished", null, repository::findFinished);
+        return finished.stream()
+                .filter(match -> !match.status().isLive())
+                .sorted(Comparator.comparingLong(Match::startSequence).reversed())
+                .toList();
+    }
+
     /** Lock-free compare-and-set loop: read, validate, build new snapshot, CAS; retry if another write won. */
     private Match changeScore(MatchId id, Side side, int delta) {
         Objects.requireNonNull(id, "id must not be null");

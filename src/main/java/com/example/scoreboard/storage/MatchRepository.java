@@ -58,4 +58,7 @@ public interface MatchRepository {
 
     /** Point-in-time snapshot of all live matches, in any order. */
     List<Match> findLive();
+
+    /** Point-in-time snapshot of all matches that are no longer live (the kept history), in any order. */
+    List<Match> findFinished();
 }
