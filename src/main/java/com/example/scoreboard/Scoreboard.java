@@ -12,6 +12,8 @@ import com.example.scoreboard.exception.TeamAlreadyPlayingException;
 import com.example.scoreboard.storage.InMemoryMatchRepository;
 import com.example.scoreboard.storage.MatchRepository;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -22,6 +24,11 @@ import java.util.function.Supplier;
  * snapshots, so no update is lost and no lock is ever held, which suits virtual threads.
  */
 public final class Scoreboard {
+
+    /** Total score descending; ties go to the most recently started match. */
+    private static final Comparator<Match> SUMMARY_ORDER = Comparator
+            .comparingLong(Match::totalScore).reversed()
+            .thenComparing(Comparator.comparingLong(Match::startSequence).reversed());
 
     private final MatchRepository repository;
 
@@ -135,6 +142,21 @@ public final class Scoreboard {
                     + current.homeScore() + "-" + current.awayScore() + ", got "
                     + finished.homeScore() + "-" + finished.awayScore());
         }
+    }
+
+    /**
+     * Live matches ordered by total score (descending); matches with the same total are ordered with the most
+     * recently started first.
+     *
+     * <p>A point-in-time snapshot: each match is internally consistent, but a write in flight at that instant
+     * may not be included. The returned list is unmodifiable.
+     */
+    public List<Match> getSummary() {
+        List<Match> live = call("MatchRepository.findLive", null, repository::findLive);
+        return live.stream()
+                .filter(match -> match.status().isLive())
+                .sorted(SUMMARY_ORDER)
+                .toList();
     }
 
     /** Lock-free compare-and-set loop: read, validate, build new snapshot, CAS; retry if another write won. */
