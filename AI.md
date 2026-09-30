@@ -2,7 +2,24 @@
 
 ## Summary
 
-_TBD_
+AI (Claude, in the claude.ai chat with a code sandbox) was used for design, reasoning, code generation and
+testing. I drove the decisions; the AI proposed options, wrote the plan and the code, and ran the tests.
+
+How the work went:
+
+1. **Understanding the task.** The AI summarised the exercise PDF and listed the open questions it contains.
+2. **Decisions.** I answered the open questions myself (one live match per team, no negative scores,
+   incremental updates, id-based matches, thread safety, keeping finished matches) and added requirements:
+   atomic, non-blocking updates for virtual threads, and a pluggable storage layer.
+3. **Plan as a reviewable document.** The AI wrote an implementation plan as a shared doc. I reviewed it
+   through inline comments, which reshaped the design: `Team`, `MatchId`, `Match`, `MatchStatus` and
+   `ErrorCode` became user-implementable interfaces, errors became precise typed exceptions, the score API
+   became per goal with cancellation, and `getFinishedMatches()` was chosen as the extra feature. All threads
+   are recorded below.
+4. **Implementation.** The AI implemented the plan commit by commit, test-first, compiling with all warnings
+   as errors and running the JUnit 5 suite in its sandbox after every step (80 tests).
+5. **Verification.** I run `mvn test` locally before submitting (the sandbox could not reach Maven Central,
+   so it compiled with `javac` and ran JUnit's console launcher directly).
 
 ## Prompt history
 
@@ -11,6 +28,7 @@ _TBD_
 3. "Okay. Create git repo here and lets start scaffolding plan here"
 4. "what is home and away ? Updates should be atomic, think about concurrent writes, it should not be blocking becase someone may use virtual threads. Library should have possibility to provide storage layer via interface. Answer: Team cannot play two matches at once, negative scores are not allowed, score update should be an incremenetal commit, match is identified via id, it should be threadsafe, finished matches should be kept for historical reasons. Plan here should be as an artifact i want to review IT."
 5. "Make sure that my comments are visible in AI.md."
+6. "Now proceed with implementation."
 
 ## Plan review comments
 The implementation plan was written as a shared document and reviewed through inline comments. Every thread is recorded below verbatim, in the order it happened (2026-09-30). Each heading names the part of the plan the comment was attached to.
@@ -76,6 +94,28 @@ Plan document: https://claude.ai/code/artifact/72b953b1-b306-4c4d-8288-036d2e85d
 
 **Note:** the spec does require the extra feature ("Add exactly one additional operation of your choice", with its own commit), which confirms the decision in thread 7.
 
+## Issues the AI caught during implementation
+
+Worth knowing for review, because each one is a subtle bug that tests alone might not reveal:
+
+- **`ConcurrentHashMap.replace(key, old, new)` compares with `equals`.** A custom `Match` whose `equals`
+  only compared ids could overwrite a newer version and lose an update. `InMemoryMatchRepository.replace`
+  now checks the version inside `computeIfPresent`, so the check and the write are atomic and independent
+  of `equals`.
+- **Swallowed failures in concurrency tests.** Exceptions and failed assertions inside
+  `ExecutorService.submit` tasks are captured in the `Future` and never reported. The test helper now calls
+  `get()` on every future; a deliberately failing probe confirmed that worker failures fail the test.
+- **Overflow in `totalScore()`.** Two scores near `Integer.MAX_VALUE` would overflow an `int` sum and corrupt
+  the ordering, so `totalScore()` returns `long` (the plan had `int`).
+- **Stale team claims.** Releasing a finished match's teams happens just after the finish is stored. A claim
+  that still points at a non-live match is treated as stale and taken over, so a start right after a finish
+  never fails spuriously.
+- **Opposite simultaneous starts.** Claiming teams in key order prevents X–Y and Y–X from each taking one
+  team and both failing (tested over 200 rounds).
+
 ## Artifacts that guided the implementation
 
-- Implementation plan (shared doc, reviewed via the comments above): https://claude.ai/code/artifact/72b953b1-b306-4c4d-8288-036d2e85db1d
+- Implementation plan (shared doc, reviewed via the comments above):
+  https://claude.ai/code/artifact/72b953b1-b306-4c4d-8288-036d2e85db1d
+- Repository copy of the plan: [`docs/PLAN.md`](docs/PLAN.md)
+- The exercise PDF (Sportradar "Coding Exercise – Data & Odds Platform")
