@@ -101,6 +101,42 @@ public final class Scoreboard {
         return changeScore(id, side, -1);
     }
 
+    /**
+     * Finishes a match. It leaves the summary but is kept as history, and both teams can start new matches.
+     *
+     * @return the finished match
+     * @throws MatchNotFoundException if no match has this id
+     * @throws MatchNotLiveException  if the match is already not live
+     */
+    public Match finishMatch(MatchId id) {
+        Objects.requireNonNull(id, "id must not be null");
+        while (true) {
+            Match current = load(id);
+            if (!current.status().isLive()) {
+                throw new MatchNotLiveException(id, current.status(), "finish");
+            }
+            Match finished = call("Match.finished", id, current::finished);
+            checkFinished(current, finished);
+            if (replace(current, finished)) {
+                return finished;
+            }
+        }
+    }
+
+    private static void checkFinished(Match current, Match finished) {
+        String operation = "Match.finished";
+        checkSuccessor(operation, current, finished);
+        if (finished.status().isLive()) {
+            throw new RepositoryException(operation, current.id(),
+                    "must return a non-live status, got " + finished.status().name());
+        }
+        if (finished.homeScore() != current.homeScore() || finished.awayScore() != current.awayScore()) {
+            throw new RepositoryException(operation, current.id(), "must keep the score "
+                    + current.homeScore() + "-" + current.awayScore() + ", got "
+                    + finished.homeScore() + "-" + finished.awayScore());
+        }
+    }
+
     /** Lock-free compare-and-set loop: read, validate, build new snapshot, CAS; retry if another write won. */
     private Match changeScore(MatchId id, Side side, int delta) {
         Objects.requireNonNull(id, "id must not be null");
