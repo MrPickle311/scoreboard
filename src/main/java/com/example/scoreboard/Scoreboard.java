@@ -1,8 +1,12 @@
 package com.example.scoreboard;
 
+import com.example.scoreboard.exception.InvalidGoalsException;
 import com.example.scoreboard.exception.InvalidTeamException;
+import com.example.scoreboard.exception.MatchNotFoundException;
+import com.example.scoreboard.exception.MatchNotLiveException;
 import com.example.scoreboard.exception.RepositoryException;
 import com.example.scoreboard.exception.SameTeamException;
+import com.example.scoreboard.exception.ScoreOverflowException;
 import com.example.scoreboard.exception.ScoreboardException;
 import com.example.scoreboard.exception.TeamAlreadyPlayingException;
 import com.example.scoreboard.storage.InMemoryMatchRepository;
@@ -71,6 +75,93 @@ public final class Scoreboard {
         checkNewMatch(match, id);
         run("MatchRepository.insert", id, () -> repository.insert(match));
         return id;
+    }
+
+    /**
+     * Adds one goal to the given side. Concurrent goals are never lost.
+     *
+     * @return the match as it stands after this goal
+     * @throws MatchNotFoundException  if no match has this id
+     * @throws MatchNotLiveException   if the match is not live
+     * @throws ScoreOverflowException  if the score is already {@link Integer#MAX_VALUE}
+     */
+    public Match scoreGoal(MatchId id, Side side) {
+        return changeScore(id, side, +1);
+    }
+
+    /**
+     * Removes one goal from the given side, e.g. after a VAR decision. A score never goes below 0.
+     *
+     * @return the match as it stands after the cancellation
+     * @throws MatchNotFoundException if no match has this id
+     * @throws MatchNotLiveException  if the match is not live
+     * @throws InvalidGoalsException  if that side's score is already 0
+     */
+    public Match cancelGoal(MatchId id, Side side) {
+        return changeScore(id, side, -1);
+    }
+
+    /** Lock-free compare-and-set loop: read, validate, build new snapshot, CAS; retry if another write won. */
+    private Match changeScore(MatchId id, Side side, int delta) {
+        Objects.requireNonNull(id, "id must not be null");
+        Objects.requireNonNull(side, "side must not be null");
+        String action = delta > 0 ? "score a goal" : "cancel a goal";
+        while (true) {
+            Match current = load(id);
+            if (!current.status().isLive()) {
+                throw new MatchNotLiveException(id, current.status(), action);
+            }
+            int score = current.score(side);
+            if (delta < 0 && score == 0) {
+                throw new InvalidGoalsException(id, side);
+            }
+            if (delta > 0 && score == Integer.MAX_VALUE) {
+                throw new ScoreOverflowException(id, side, score, delta);
+            }
+            Match updated = call("Match.withGoal", id, () -> current.withGoal(side, delta));
+            checkGoal(current, updated, side, delta);
+            if (replace(current, updated)) {
+                return updated;
+            }
+        }
+    }
+
+    private Match load(MatchId id) {
+        return call("MatchRepository.findById", id, () -> repository.findById(id))
+                .orElseThrow(() -> new MatchNotFoundException(id));
+    }
+
+    private boolean replace(Match expected, Match updated) {
+        return call("MatchRepository.replace", expected.id(), () -> repository.replace(expected, updated));
+    }
+
+    private static void checkGoal(Match current, Match updated, Side side, int delta) {
+        String operation = "Match.withGoal";
+        checkSuccessor(operation, current, updated);
+        Side other = side == Side.HOME ? Side.AWAY : Side.HOME;
+        if (updated.score(side) != current.score(side) + delta || updated.score(other) != current.score(other)) {
+            throw new RepositoryException(operation, current.id(),
+                    "must change only the " + side.label() + " score by " + delta + ": "
+                            + current.homeScore() + "-" + current.awayScore() + " became "
+                            + updated.homeScore() + "-" + updated.awayScore());
+        }
+    }
+
+    /** Checks the rules every change of a match must follow: new instance, same id, version + 1. */
+    private static void checkSuccessor(String operation, Match current, Match updated) {
+        if (updated == null) {
+            throw new RepositoryException(operation, current.id(), "returned null");
+        }
+        if (updated == current) {
+            throw new RepositoryException(operation, current.id(), "must return a new instance");
+        }
+        if (!current.id().equals(updated.id())) {
+            throw new RepositoryException(operation, current.id(), "must keep id " + current.id() + ", got " + updated.id());
+        }
+        if (updated.version() != current.version() + 1) {
+            throw new RepositoryException(operation, current.id(),
+                    "must return version " + (current.version() + 1) + ", got " + updated.version());
+        }
     }
 
     private static String keyOf(Team team) {
